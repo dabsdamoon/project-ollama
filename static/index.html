@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ollama Chat</title>
+<title>Ollama Chat (with File Support)</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -21,6 +21,7 @@
     background: #0f3460; color: #e0e0e0; border: 1px solid #533483;
     font-size: 14px;
   }
+  #new-chat-string-btn { /* 중복 방지를 위해 ID 수정 가능 */ }
   #new-chat-btn {
     padding: 6px 14px; border-radius: 6px; background: #533483;
     color: #fff; border: none; cursor: pointer; font-size: 14px;
@@ -45,9 +46,29 @@
     color: #888; font-style: italic; border-left: 2px solid #555;
     padding-left: 10px; margin-bottom: 8px;
   }
+  /* 파일 첨부 표시 스타일 */
+  #file-status {
+    font-size: 12px; color: #533483; padding: 4px 20px;
+    background: #16213e; display: none; /* 기본은 숨김 */
+  }
+  .loading-indicator {
+    display: flex; align-items: center; gap: 8px; color: #aaa;
+    font-size: 14px;
+  }
+  .loading-dots { display: flex; gap: 4px; }
+  .loading-dots span {
+    width: 8px; height: 8px; border-radius: 50%; background: #533483;
+    animation: bounce 1.4s infinite ease-in-out both;
+  }
+  .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+  .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+  @keyframes bounce {
+    0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+  }
   #input-area {
     padding: 16px 20px; background: #16213e; border-top: 1px solid #0f3460;
-    display: flex; gap: 10px;
+    display: flex; gap: 10px; align-items: flex-end;
   }
   #msg-input {
     flex: 1; padding: 12px 16px; border-radius: 10px;
@@ -56,6 +77,14 @@
     min-height: 48px; max-height: 200px;
   }
   #msg-input:focus { outline: none; border-color: #6a42a0; }
+  
+  /* 파일 첨부 버튼 스타일 */
+  #file-btn {
+    background: none; border: none; color: #e0e0e0; font-size: 20px;
+    cursor: pointer; padding: 5px; transition: color 0.2s;
+  }
+  #file-btn:hover { color: #533483; }
+
   #send-btn {
     padding: 12px 24px; border-radius: 10px; background: #533483;
     color: #fff; border: none; cursor: pointer; font-size: 15px;
@@ -63,16 +92,27 @@
   }
   #send-btn:hover { background: #6a42a0; }
   #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #send-btn.stop { background: #a03333; }
+  #send-btn.stop:hover { background: #c04040; }
 </style>
 </head>
 <body>
 <header>
   <h1>Ollama Chat</h1>
   <select id="model-select"></select>
-  <button id="new-chat-btn">New Chat</button>
+  <button id="new-start-btn">New Chat</button>
 </header>
+
+<!-- 파일 첨부 상태를 보여주는 바 -->
+<div id="file-status">📎 File attached: <span id="file-name-display"></span></div>
+
 <div id="chat-container"></div>
+
 <div id="input-area">
+  <!-- 파일 업로드용 숨겨진 input -->
+  <input type="file" id="file-input" style="display:none;" accept=".txt,.py,.js,.json,.md,.csv,.html,.css">
+  <button id="file-btn" title="Attach text file">📎</button>
+  
   <textarea id="msg-input" placeholder="Type a message..." rows="1"></textarea>
   <button id="send-btn">Send</button>
 </div>
@@ -82,20 +122,53 @@ const chatContainer = document.getElementById("chat-container");
 const msgInput = document.getElementById("msg-input");
 const sendBtn = document.getElementById("send-btn");
 const modelSelect = document.getElementById("model-select");
-const newChatBtn = document.getElementById("new-chat-btn");
+const newChatBtn = document.getElementById("new-start-btn");
+const fileInput = document.getElementById("file-input");
+const fileBtn = document.getElementById("file-btn");
+const fileStatus = document.getElementById("file-status");
+const fileNameDisplay = document.getElementById("file-name-display");
 
 let messages = [];
 let streaming = false;
+let currentModel = null;
+let attachedFileContent = "";
+let abortController = null;
+
+// --- 파일 처리 로직 ---
+
+// 파일 버튼 클릭 시 input 트리거
+fileBtn.addEventListener("click", () => fileInput.click());
+
+// 파일이 선택되었을 때 실행
+fileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    attachedFileContent = `\n\n[Attached File Content: ${file.name}]\n${event.target.result}`;
+    // UI 업데이트: 파일이 첨부되었음을 알림
+    fileStatus.style.display = "block";
+    fileNameDisplay.textContent = file.name;
+    msgInput.placeholder = "File attached. Type a message...";
+  };
+  reader.onerror = () => alert("Error reading file");
+  reader.readAsText(file);
+});
+
+// --- 기존 로직 (수정됨) ---
 
 async function loadModels() {
   try {
     const resp = await fetch("/api/models");
     const models = await resp.json();
+    const defaultModel = "gemma4:26b";
     modelSelect.innerHTML = models
-      .map(m => `<option value="${m}">${m}</option>`)
+      .map(m => `<option value="${m}"${m === defaultModel ? " selected" : ""}>${m}</option>`)
       .join("");
+    currentModel = modelSelect.value;
   } catch {
-    modelSelect.innerHTML = '<option>gemma4:27b</option>';
+    modelSelect.innerHTML = '<option>gemma4:26b</option>';
   }
 }
 
@@ -110,20 +183,35 @@ function addMessageBubble(role, content) {
 
 async function sendMessage() {
   const text = msgInput.value.trim();
-  if (!text || streaming) return;
+  // 파일 내용이 있거나 텍스트가 있으면 전송 가능
+  if ((!text && !attachedFileContent) || streaming) return;
 
-  messages.push({ role: "user", content: text });
-  addMessageBubble("user", text);
+  // 핵심: 사용자의 텍스트 + 파일 내용을 합쳐서 전송
+  const finalContent = text + attachedFileContent;
+  
+  messages.push({ role: "user", content: finalContent });
+  addMessageBubble("user", text + (attachedFileContent ? " (File attached)" : ""));
+  
+  // 전송 후 초기화
   msgInput.value = "";
   msgInput.style.height = "auto";
+  attachedFileContent = ""; // 파일 내용 초기화
+  fileInput.value = "";     // input 초기화
+  fileStatus.style.display = "none";
+  msgInput.placeholder = "Type a message...";
 
   streaming = true;
-  sendBtn.disabled = true;
+  abortController = new AbortController();
+  sendBtn.disabled = false;
+  sendBtn.textContent = "Stop";
+  sendBtn.classList.add("stop");
 
   const bubble = addMessageBubble("assistant", "");
+  bubble.innerHTML = '<div class="loading-indicator"><div class="loading-dots"><span></span><span></span><span></span></div>Generating response...</div>';
   let fullContent = "";
   let thinkContent = "";
   let inThinking = false;
+  let firstToken = true;
 
   try {
     const resp = await fetch("/api/chat", {
@@ -133,6 +221,7 @@ async function sendMessage() {
         model: modelSelect.value,
         messages: messages,
       }),
+      signal: abortController.signal,
     });
 
     const reader = resp.body.getReader();
@@ -152,17 +241,21 @@ async function sendMessage() {
         try {
           const data = JSON.parse(line);
           const token = data.message?.content ?? "";
+          const thinking = data.message?.thinking ?? "";
+
+          if (firstToken && (thinking || token)) {
+            firstToken = false;
+          }
+
+          if (thinking) {
+            thinkContent += thinking;
+          }
 
           if (token === "<think>") {
             inThinking = true;
-            continue;
-          }
-          if (token === "</think>") {
+          } else if (token === "</think>") {
             inThinking = false;
-            continue;
-          }
-          // Handle tokens that contain think tags mixed with content
-          if (token.includes("<think>") || token.includes("</think>")) {
+          } else if (token.includes("<think>") || token.includes("</think>")) {
             const parts = token.split(/(<\/?think>)/);
             for (const part of parts) {
               if (part === "<think>") { inThinking = true; continue; }
@@ -181,12 +274,20 @@ async function sendMessage() {
       }
     }
   } catch (err) {
-    fullContent = `Error: ${err.message}`;
-    bubble.textContent = fullContent;
+    if (err.name !== "AbortError") {
+      fullContent = `Error: ${err.message}`;
+      bubble.textContent = fullContent;
+    }
   }
 
-  messages.push({ role: "assistant", content: fullContent });
+  if (fullContent || thinkContent) {
+    messages.push({ role: "assistant", content: fullContent });
+  }
+  renderBubble(bubble, thinkContent, fullContent);
   streaming = false;
+  abortController = null;
+  sendBtn.textContent = "Send";
+  sendBtn.classList.remove("stop");
   sendBtn.disabled = false;
   msgInput.focus();
 }
@@ -206,13 +307,30 @@ function renderBubble(bubble, thinking, content) {
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+modelSelect.addEventListener("change", async () => {
+  if (currentModel && currentModel !== modelSelect.value) {
+    fetch("/api/unload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: currentModel }),
+    });
+  }
+  currentModel = modelSelect.value;
+});
+
 newChatBtn.addEventListener("click", () => {
   messages = [];
   chatContainer.innerHTML = "";
   msgInput.focus();
 });
 
-sendBtn.addEventListener("click", sendMessage);
+sendBtn.addEventListener("click", () => {
+  if (streaming && abortController) {
+    abortController.abort();
+  } else {
+    sendMessage();
+  }
+});
 
 msgInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {

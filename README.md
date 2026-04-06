@@ -4,7 +4,7 @@ A simple web interface for multi-turn chat with local LLMs served by [Ollama](ht
 
 ## Prerequisites
 
-- [Ollama](https://ollama.com) installed with at least one model pulled (e.g. `ollama pull gemma4:27b`)
+- [Ollama](https://ollama.com) installed with at least one model pulled (e.g. `ollama pull gemma4:26b`)
 - Python 3.12+
 
 ## Setup

@@ -34,6 +34,21 @@ async def list_models():
     return [m["name"] for m in data.get("models", [])]
 
 
+class UnloadRequest(BaseModel):
+    model: str
+
+
+@app.post("/api/unload")
+async def unload_model(req: UnloadRequest):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{OLLAMA_BASE}/api/generate",
+            json={"model": req.model, "keep_alive": 0},
+        )
+        resp.raise_for_status()
+    return {"status": "unloaded", "model": req.model}
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     async def stream():
