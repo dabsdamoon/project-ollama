@@ -4,7 +4,12 @@
       "Bash(ollama list:*)",
       "Bash(pip3 --version)",
       "Bash(pip3 install:*)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Read(//Users/dabsdamoon/.bun/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(~/.bun/bin/bun --version)",
+      "Bash(ollama serve:*)",
+      "WebSearch"
     ]
   }
 }
